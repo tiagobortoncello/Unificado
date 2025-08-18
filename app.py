@@ -47,19 +47,34 @@ def process_legislative_pdf(text):
         r"^(PROJETO DE LEI COMPLEMENTAR|PROJETO DE LEI|INDICAÇÃO|PROJETO DE RESOLUÇÃO|PROPOSTA DE EMENDA À CONSTITUIÇÃO|MENSAGEM|VETO) Nº (\d{1,4}\.?\d{0,3}/\d{4})$",
         re.MULTILINE
     )
+    
+    # NOVO PADRÃO PARA UTILIDADE PÚBLICA
+    pattern_utilidade = re.compile(
+        r"Declara de utilidade pública", re.IGNORECASE | re.DOTALL
+    )
+
     proposicoes = []
+    
     for match in pattern_prop.finditer(text):
         start_idx = match.end()
-        subseq_text = text[start_idx:start_idx+30]
+        subseq_text = text[start_idx:start_idx + 250]
+        
         if "(Redação do Vencido)" in subseq_text:
             continue
+        
         tipo_extenso = match.group(1)
         numero_ano = match.group(2).replace(".", "")
         numero, ano = numero_ano.split("/")
         sigla = tipo_map_prop[tipo_extenso]
-        proposicoes.append([sigla, numero, ano])
-    df_proposicoes = pd.DataFrame(proposicoes)
-
+        
+        categoria = ""
+        if pattern_utilidade.search(subseq_text):
+            categoria = "Utilidade Pública"
+        
+        proposicoes.append([sigla, numero, ano, categoria])
+    
+    df_proposicoes = pd.DataFrame(proposicoes, columns=['Sigla', 'Número', 'Ano', 'Categoria'])
+    
     # ==========================
     # ABA 3: Requerimentos
     # ==========================
@@ -312,7 +327,7 @@ def run_app():
                     file_name=file_name,
                     mime=mime_type
                 )
-                st.info(f"O download do arquivo {file_name} está pronto.")
+                st.info(f"O download do arquivo **{file_name}** está pronto.")
 
         except Exception as e:
             st.error(f"Ocorreu um erro ao processar o arquivo: {e}")
