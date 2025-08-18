@@ -141,4 +141,258 @@ def process_legislative_pdf(text):
     emenda_pattern = re.compile(r"^(?:\s*)EMENDA Nº (\d+)\s*", re.MULTILINE)
     substitutivo_pattern = re.compile(r"^(?:\s*)SUBSTITUTIVO Nº (\d+)\s*", re.MULTILINE)
     project_pattern = re.compile(
-        r"Conclusão\s*([\s\S]*?)(Projeto de Lei|PL|Projeto de Resolução|PRE
+        r"Conclusão\s*([\s\S]*?)(Projeto de Lei|PL|Projeto de Resolução|PRE|Proposta de Emenda à Constituição|PEC|Projeto de Lei Complementar|PLC|Requerimento)\s+(?:nº|Nº)?\s*(\d{1,}\.??\d{3})\s*/\s*(\d{4})",
+        re.IGNORECASE | re.DOTALL
+    )
+    all_matches = list(emenda_pattern.finditer(text)) + list(substitutivo_pattern.finditer(text))
+    all_matches.sort(key=lambda x: x.start())
+    
+    for title_match in all_matches:
+        text_before_title = text[:title_match.start()]
+        last_project_match = None
+        for match in project_pattern.finditer(text_before_title):
+            last_project_match = match
+        if last_project_match:
+            sigla_raw = last_project_match.group(2)
+            sigla_map = {
+                "requerimento": "RQN", "projeto de lei": "PL", "pl": "PL", "projeto de resolução": "PRE",
+                "pre": "PRE", "proposta de emenda à constituição": "PEC", "pec": "PEC",
+                "projeto de lei complementar": "PLC", "plc": "PLC"
+            }
+            sigla = sigla_map.get(sigla_raw.lower(), sigla_raw.upper())
+            numero = last_project_match.group(3).replace(".", "")
+            ano = last_project_match.group(4)
+            project_key = (sigla, numero, ano)
+            item_type = "EMENDA" if "EMENDA" in title_match.group(0).upper() else "SUBSTITUTIVO"
+            if project_key not in found_projects:
+                found_projects[project_key] = set()
+            found_projects[project_key].add(item_type)
+    
+    pareceres = []
+    for (sigla, numero, ano), types in found_projects.items():
+        type_str = "SUB/EMENDA" if len(types) > 1 else list(types)[0]
+        pareceres.append([sigla, numero, ano, type_str])
+    df_pareceres = pd.DataFrame(pareceres)
+    
+    return {
+        "Normas": df_normas,
+        "Proposicoes": df_proposicoes,
+        "Requerimentos": df_requerimentos,
+        "Pareceres": df_pareceres
+    }
+
+def process_administrative_pdf(pdf_bytes):
+    """
+    Processa bytes de um arquivo PDF para extrair normas administrativas e suas alterações.
+    """
+    try:
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    except Exception as e:
+        st.error(f"Erro ao abrir o arquivo PDF: {e}")
+        return None
+
+    resultados = []
+
+    # Padrão para as normas que são publicadas (originais)
+    regex_norma_publicada = re.compile(
+        r'(DELIBERAÇÃO DA MESA|PORTARIA DGE|ORDEM DE SERVIÇO PRES/PSEC)\s+Nº\s+([\d\.]+)\/(\d{4})'
+    )
+    # Padrão para as normas que são alteradas/revogadas (alvo da alteração)
+    regex_norma_alvo = re.compile(
+        r'(?:Portaria|Resolução|Decreto|Lei|DELIBERAÇÃO DA MESA|ORDEM DE SERVIÇO|PRT|RES|DECRETO|LEI|DLB|OSV|RN|EMENDA)\s+(?:nº|Nº)?\s*([\d\.]+)(?:,\s+de\s+\d{1,2}\s+de\s+[A-Za-zç]+\s+de\s+(\d{4}))?'
+    )
+
+    # Padrões para as expressões de alteração/revogação
+    prorrogacao_pattern = re.compile(r'Fica prorrogado por trinta dias', re.IGNORECASE)
+    revogacao_pattern = re.compile(r'Fica revogad[ao]', re.IGNORECASE)
+    acrescimo_pattern = re.compile(r'ficando o artigo acrescido', re.IGNORECASE)
+    regex_dcs = re.compile(r'DECIS[ÃA]O DA 1ª-SECRETARIA')
+
+    for page in doc:
+        text = page.get_text("text")
+        
+        # Divide o texto em blocos para análise de contexto
+        text_blocks = text.split('\n\n')
+
+        for i, block in enumerate(text_blocks):
+            # Limpeza básica
+            block = re.sub(r'\s+', ' ', block).strip()
+
+            # Lógica para DECISÃO DA 1ª-SECRETARIA (DCS)
+            if regex_dcs.search(block):
+                resultados.append(["DCS", "", "", "", "", "", ""])
+
+            # 1. Procurar por normas publicadas (as que estão sendo "criadas")
+            match_publicada = regex_norma_publicada.search(block)
+            if match_publicada:
+                tipo_texto = match_publicada.group(1)
+                numero = match_publicada.group(2).replace('.', '')
+                ano = match_publicada.group(3)
+                sigla = ""
+                
+                if tipo_texto.startswith("DELIBERAÇÃO DA MESA"):
+                    sigla = "DLB"
+                elif tipo_texto.startswith("PORTARIA"):
+                    sigla = "PRT"
+                elif tipo_texto.startswith("ORDEM DE SERVIÇO"):
+                    sigla = "OSV"
+
+                # Agora, verifique se esta norma publicada se encaixa em alguma das regras de alteração
+                
+                # --- REGRA C: Se houver "ficando o artigo acrescido" ---
+                # A norma modificada é a que está imediatamente ANTES do bloco atual
+                if acrescimo_pattern.search(block):
+                    if i > 0:
+                        previous_block = text_blocks[i-1]
+                        match_anterior = regex_norma_alvo.search(previous_block)
+                        if match_anterior:
+                            numero_alvo = match_anterior.group(1).replace('.', '')
+                            ano_alvo = match_anterior.group(2) if match_anterior.group(2) else ""
+                            # Adicione uma nova linha para a norma alterada
+                            resultados.append([sigla, numero, ano, "Altera", "OSV", numero_alvo, ano_alvo])
+                            continue
+                
+                # --- REGRA A & B: Se houver "Fica prorrogado" ou "Fica revogad[ao]" ---
+                # A norma modificada é a que está imediatamente DEPOIS do padrão
+                match_prorrogacao = prorrogacao_pattern.search(block)
+                match_revogacao = revogacao_pattern.search(block)
+                
+                if match_prorrogacao or match_revogacao:
+                    start_search = (match_prorrogacao.end() if match_prorrogacao else match_revogacao.end())
+                    
+                    sub_block = block[start_search:]
+                    match_alvo = regex_norma_alvo.search(sub_block)
+                    
+                    if match_alvo:
+                        numero_alvo = match_alvo.group(1).replace('.', '')
+                        ano_alvo = match_alvo.group(2) if match_alvo.group(2) else ""
+                        
+                        acao = "Prorroga" if match_prorrogacao else "Revoga"
+                        # Adicione uma nova linha para a norma alterada
+                        resultados.append([sigla, numero, ano, acao, "PRT", numero_alvo, ano_alvo])
+                        continue
+
+                # Se não for uma alteração, adicione a norma como uma norma "original"
+                resultados.append([sigla, numero, ano, "", "", "", ""])
+
+    doc.close()
+
+    # Cria um buffer de memória para o arquivo CSV
+    output_csv = io.StringIO()
+    # Adicione os cabeçalhos para as novas colunas
+    header = ["Sigla", "Número", "Ano", "Ação", "Sigla da Norma Alvo", "Número da Norma Alvo", "Ano da Norma Alvo"]
+    writer = csv.writer(output_csv, delimiter="\t")
+    writer.writerow(header)
+    writer.writerows(resultados)
+    
+    return output_csv.getvalue().encode('utf-8')
+
+# --- Função Principal da Aplicação ---
+
+def run_app():
+    # --- Custom CSS para estilizar os títulos ---
+    st.markdown("""
+        <style>
+        .title-container {
+            text-align: center;
+            background-color: #f0f0f0;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+        }
+        .main-title {
+            color: #d11a2a;
+            font-size: 3em;
+            font-weight: bold;
+            margin-bottom: 0;
+        }
+        .subtitle-gil {
+            color: gray;
+            font-size: 1.5em;
+            margin-top: 5px;
+        }
+        </style>
+    """, unsafe_allow_html=True)
+
+    # --- Título e informações ---
+    st.markdown("""
+        <div class="title-container">
+            <h1 class="main-title">Extrator de Documentos Oficiais</h1>
+            <h4 class="subtitle-gil">GERÊNCIA DE INFORMAÇÃO LEGISLATIVA - GIL/GDI</h4>
+        </div>
+    """, unsafe_allow_html=True)
+    
+    st.divider()
+
+    # --- Seletor de tipo de Diário ---
+    diario_escolhido = st.radio(
+        "Selecione o tipo de Diário para extração:",
+        ('Legislativo', 'Administrativo', 'Executivo (Em breve)'),
+        horizontal=True
+    )
+    
+    st.divider()
+
+    uploaded_file = st.file_uploader(f"Faça o upload do arquivo PDF do **Diário {diario_escolhido}**.", type="pdf")
+
+    if uploaded_file is not None:
+        try:
+            if diario_escolhido == 'Legislativo':
+                reader = PdfReader(uploaded_file)
+                text = ""
+                for page in reader.pages:
+                    page_text = page.extract_text()
+                    if page_text:
+                        text += page_text + "\n"
+                
+                text = re.sub(r"[ \t]+", " ", text)
+                text = re.sub(r"\n+", "\n", text)
+                
+                with st.spinner('Extraindo dados do Diário do Legislativo...'):
+                    extracted_data = process_legislative_pdf(text)
+
+                output = io.BytesIO()
+                excel_file_name = "Legislativo_Extraido.xlsx"
+                
+                with pd.ExcelWriter(output, engine="openpyxl") as writer:
+                    for sheet_name, df in extracted_data.items():
+                        df.to_excel(writer, sheet_name=sheet_name, index=False, header=False)
+                
+                output.seek(0)
+                download_data = output
+                file_name = excel_file_name
+                mime_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+            elif diario_escolhido == 'Administrativo':
+                pdf_bytes = uploaded_file.read()
+                
+                with st.spinner('Extraindo dados do Diário Administrativo...'):
+                    csv_data = process_administrative_pdf(pdf_bytes)
+
+                download_data = csv_data
+                file_name = "Administrativo_Extraido.csv"
+                mime_type = "text/csv"
+
+            else: # Executivo (placeholder)
+                st.info("A funcionalidade para o Diário do Executivo ainda está em desenvolvimento.")
+                download_data = None
+                file_name = None
+                mime_type = None
+
+            if download_data:
+                st.success("Dados extraídos com sucesso! ✅")
+                st.divider()
+                st.download_button(
+                    label="Clique aqui para baixar o arquivo",
+                    data=download_data,
+                    file_name=file_name,
+                    mime=mime_type
+                )
+                st.info(f"O download do arquivo **{file_name}** está pronto.")
+
+        except Exception as e:
+            st.error(f"Ocorreu um erro ao processar o arquivo: {e}")
+
+# Executa a função principal
+if __name__ == "__main__":
+    run_app()
