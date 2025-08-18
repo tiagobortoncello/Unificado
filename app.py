@@ -48,6 +48,7 @@ def process_legislative_pdf(text):
         re.MULTILINE
     )
     
+    # NOVO PADRÃO PARA UTILIDADE PÚBLICA
     pattern_utilidade = re.compile(
         r"Declara de utilidade pública", re.IGNORECASE | re.DOTALL
     )
@@ -183,7 +184,7 @@ def process_legislative_pdf(text):
 
 def process_administrative_pdf(pdf_bytes):
     """
-    Processa bytes de um arquivo PDF para extrair normas administrativas e suas alterações.
+    Processa bytes de um arquivo PDF para extrair normas administrativas e retorna dados CSV.
     """
     try:
         doc = fitz.open(stream=pdf_bytes, filetype="pdf")
@@ -192,99 +193,37 @@ def process_administrative_pdf(pdf_bytes):
         return None
 
     resultados = []
-
-    # Padrão para as normas que são publicadas (originais)
-    regex_norma_publicada = re.compile(
+    regex = re.compile(
         r'(DELIBERAÇÃO DA MESA|PORTARIA DGE|ORDEM DE SERVIÇO PRES/PSEC)\s+Nº\s+([\d\.]+)\/(\d{4})'
     )
-    # Padrão para as normas que são alteradas/revogadas (alvo da alteração)
-    regex_norma_alvo = re.compile(
-        r'(?:Portaria|Resolução|Decreto|Lei|DELIBERAÇÃO DA MESA|ORDEM DE SERVIÇO|PRT|RES|DECRETO|LEI|DLB|OSV|RN|EMENDA)\s+(?:nº|Nº)?\s*([\d\.]+)(?:,\s+de\s+\d{1,2}\s+de\s+[A-Za-zç]+\s+de\s+(\d{4}))?'
-    )
-
-    # Padrões para as expressões de alteração/revogação
-    prorrogacao_pattern = re.compile(r'Fica prorrogado por trinta dias', re.IGNORECASE)
-    revogacao_pattern = re.compile(r'Fica revogad[ao]', re.IGNORECASE)
-    acrescimo_pattern = re.compile(r'ficando o artigo acrescido', re.IGNORECASE)
     regex_dcs = re.compile(r'DECIS[ÃA]O DA 1ª-SECRETARIA')
 
     for page in doc:
         text = page.get_text("text")
-        
-        # Divide o texto em blocos para análise de contexto
-        text_blocks = text.split('\n\n')
+        text = re.sub(r'\s+', ' ', text)
 
-        for i, block in enumerate(text_blocks):
-            # Limpeza básica
-            block = re.sub(r'\s+', ' ', block).strip()
+        for match in regex.finditer(text):
+            tipo_texto = match.group(1)
+            numero = match.group(2).replace('.', '')
+            ano = match.group(3)
 
-            # Lógica para DECISÃO DA 1ª-SECRETARIA (DCS)
-            if regex_dcs.search(block):
-                resultados.append(["DCS", "", "", "", "", "", ""])
+            if tipo_texto.startswith("DELIBERAÇÃO DA MESA"):
+                sigla = "DLB"
+            elif tipo_texto.startswith("PORTARIA"):
+                sigla = "PRT"
+            elif tipo_texto.startswith("ORDEM DE SERVIÇO"):
+                sigla = "OSV"
+            else:
+                continue
+            resultados.append([sigla, numero, ano])
 
-            # 1. Procurar por normas publicadas (as que estão sendo "criadas")
-            match_publicada = regex_norma_publicada.search(block)
-            if match_publicada:
-                tipo_texto = match_publicada.group(1)
-                numero = match_publicada.group(2).replace('.', '')
-                ano = match_publicada.group(3)
-                sigla = ""
-                
-                if tipo_texto.startswith("DELIBERAÇÃO DA MESA"):
-                    sigla = "DLB"
-                elif tipo_texto.startswith("PORTARIA"):
-                    sigla = "PRT"
-                elif tipo_texto.startswith("ORDEM DE SERVIÇO"):
-                    sigla = "OSV"
-
-                # Agora, verifique se esta norma publicada se encaixa em alguma das regras de alteração
-                
-                # --- REGRA C: Se houver "ficando o artigo acrescido" ---
-                # A norma modificada é a que está imediatamente ANTES do bloco atual
-                if acrescimo_pattern.search(block):
-                    if i > 0:
-                        previous_block = text_blocks[i-1]
-                        match_anterior = regex_norma_alvo.search(previous_block)
-                        if match_anterior:
-                            numero_alvo = match_anterior.group(1).replace('.', '')
-                            ano_alvo = match_anterior.group(2) if match_anterior.group(2) else ""
-                            # Adicione uma nova linha para a norma alterada
-                            resultados.append([sigla, numero, ano, "Altera", "OSV", numero_alvo, ano_alvo])
-                            continue
-                
-                # --- REGRA A & B: Se houver "Fica prorrogado" ou "Fica revogad[ao]" ---
-                # A norma modificada é a que está imediatamente DEPOIS do padrão
-                match_prorrogacao = prorrogacao_pattern.search(block)
-                match_revogacao = revogacao_pattern.search(block)
-                
-                if match_prorrogacao or match_revogacao:
-                    start_search = (match_prorrogacao.end() if match_prorrogacao else match_revogacao.end())
-                    
-                    sub_block = block[start_search:]
-                    match_alvo = regex_norma_alvo.search(sub_block)
-                    
-                    if match_alvo:
-                        numero_alvo = match_alvo.group(1).replace('.', '')
-                        ano_alvo = match_alvo.group(2) if match_alvo.group(2) else ""
-                        
-                        acao = "Prorroga" if match_prorrogacao else "Revoga"
-                        # Adicione uma nova linha para a norma alterada
-                        resultados.append([sigla, numero, ano, acao, "PRT", numero_alvo, ano_alvo])
-                        continue
-
-                # Se não for uma alteração, adicione a norma como uma norma "original"
-                resultados.append([sigla, numero, ano, "", "", "", ""])
-
+        if regex_dcs.search(text):
+            resultados.append(["DCS", "", ""])
     doc.close()
 
-    # Cria um buffer de memória para o arquivo CSV
     output_csv = io.StringIO()
-    # Adicione os cabeçalhos para as novas colunas
-    header = ["Sigla", "Número", "Ano", "Ação", "Sigla da Norma Alvo", "Número da Norma Alvo", "Ano da Norma Alvo"]
     writer = csv.writer(output_csv, delimiter="\t")
-    writer.writerow(header)
     writer.writerows(resultados)
-    
     return output_csv.getvalue().encode('utf-8')
 
 # --- Função Principal da Aplicação ---
