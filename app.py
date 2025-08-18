@@ -48,7 +48,6 @@ def process_legislative_pdf(text):
         re.MULTILINE
     )
     
-    # NOVO PADRÃO PARA UTILIDADE PÚBLICA
     pattern_utilidade = re.compile(
         r"Declara de utilidade pública", re.IGNORECASE | re.DOTALL
     )
@@ -71,9 +70,11 @@ def process_legislative_pdf(text):
         if pattern_utilidade.search(subseq_text):
             categoria = "Utilidade Pública"
         
-        proposicoes.append([sigla, numero, ano, categoria])
+        # Inserindo duas colunas vazias após a coluna 'ano'
+        proposicoes.append([sigla, numero, ano, '', '', categoria])
     
-    df_proposicoes = pd.DataFrame(proposicoes, columns=['Sigla', 'Número', 'Ano', 'Categoria'])
+    # Adicionando os nomes das novas colunas ao DataFrame
+    df_proposicoes = pd.DataFrame(proposicoes, columns=['Sigla', 'Número', 'Ano', 'Categoria 1', 'Categoria 2', 'Categoria'])
     
     # ==========================
     # ABA 3: Requerimentos
