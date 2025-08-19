@@ -53,7 +53,6 @@ def process_legislative_pdf(text):
         "MENSAGEM": "MSG", 
         "VETO": "VET"
     }
-
     pattern_prop = re.compile(
         r"^(PROJETO DE LEI COMPLEMENTAR|PROJETO DE LEI|INDICAÇÃO|PROJETO DE RESOLUÇÃO|PROPOSTA DE EMENDA À CONSTITUIÇÃO|MENSAGEM|VETO) Nº (\d{1,4}\.?\d{0,3}/\d{4})$",
         re.MULTILINE
@@ -224,3 +223,4 @@ def process_legislative_pdf(text):
     )
 
     return df_normas, df_proposicoes, df_requerimentos, df_pareceres
+
