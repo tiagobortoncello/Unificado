@@ -81,22 +81,32 @@ def process_legislative_pdf(text):
     # ==========================
     def classify_req(segment):
         segment_lower = segment.lower()
-        if "voto de congratula" in segment_lower: return "Voto de congratulações"
-        if "manifestação de pesar" in segment_lower: return "Manifestação de pesar"
-        if "manifestação de repúdio" in segment_lower: return "Manifestação de repúdio"
-        if "moção de aplauso" in segment_lower: return "Moção de aplauso"
+        # Se contiver a frase de exclusão, não classifica
+        if "realizada audiência pública" in segment_lower:
+            return ""
+        
+        # Classifica se contiver as outras frases
+        if "voto de congratula" in segment_lower or "formulado voto de congratula" in segment_lower:
+            return "Voto de congratulações"
+        if "manifestação de pesar" in segment_lower:
+            return "Manifestação de pesar"
+        if "manifestação de repúdio" in segment_lower:
+            return "Manifestação de repúdio"
+        if "moção de aplauso" in segment_lower:
+            return "Moção de aplauso"
         return ""
 
     requerimentos = []
     rqn_pattern = re.compile(r"^(?:\s*)(Nº)\s+(\d{2}\.?\d{3}/\d{4})\s*,\s*(do|da)", re.MULTILINE)
     rqc_pattern = re.compile(r"^(?:\s*)(nº)\s+(\d{2}\.?\d{3}/\d{4})\s*,\s*(do|da)", re.MULTILINE)
     nao_recebidas_header_pattern = re.compile(r"PROPOSIÇÕES\s*NÃO\s*RECEBIDAS", re.IGNORECASE)
-
+    
     for match in rqn_pattern.finditer(text):
         start_idx = match.start()
         next_match = re.search(r"^(?:\s*)(Nº|nº)\s+(\d{2}\.?\d{3}/\d{4})", text[start_idx + 1:], flags=re.MULTILINE)
         end_idx = (next_match.start() + start_idx + 1) if next_match else len(text)
         block = text[start_idx:end_idx].strip()
+        
         nums_in_block = re.findall(r'\d{2}\.?\d{3}/\d{4}', block)
         if not nums_in_block: continue
         num_part, ano = nums_in_block[0].replace(".", "").split("/")
@@ -108,6 +118,7 @@ def process_legislative_pdf(text):
         next_match = re.search(r"^(?:\s*)(Nº|nº)\s+(\d{2}\.?\d{3}/\d{4})", text[start_idx + 1:], flags=re.MULTILINE)
         end_idx = (next_match.start() + start_idx + 1) if next_match else len(text)
         block = text[start_idx:end_idx].strip()
+        
         nums_in_block = re.findall(r'\d{2}\.?\d{3}/\d{4}', block)
         if not nums_in_block: continue
         num_part, ano = nums_in_block[0].replace(".", "").split("/")
