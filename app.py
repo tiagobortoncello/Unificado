@@ -54,4 +54,76 @@ def process_legislative_pdf(text):
 
     proposicoes = []
     
-    for
+    for match in pattern_prop.finditer(text):
+        start_idx = match.end()
+        subseq_text = text[start_idx:start_idx + 250]
+        
+        if "(Redação do Vencido)" in subseq_text:
+            continue
+        
+        tipo_extenso = match.group(1)
+        numero_ano = match.group(2).replace(".", "")
+        numero, ano = numero_ano.split("/")
+        sigla = tipo_map_prop[tipo_extenso]
+        
+        categoria = ""
+        if pattern_utilidade.search(subseq_text):
+            categoria = "Utilidade Pública"
+        
+        # Inserindo duas colunas vazias após a coluna 'ano'
+        proposicoes.append([sigla, numero, ano, '', '', categoria])
+    
+    # Adicionando os nomes das novas colunas ao DataFrame
+    df_proposicoes = pd.DataFrame(proposicoes, columns=['Sigla', 'Número', 'Ano', 'Categoria 1', 'Categoria 2', 'Categoria'])
+    
+    # ==========================
+    # ABA 3: Requerimentos
+    # ==========================
+    def classify_req(segment):
+        segment_lower = segment.lower()
+        
+        # Regras de exclusão para requerimentos de audiência
+        if "realizada audiência pública" in segment_lower or "audiência de convidados" in segment_lower:
+            return ""
+        
+        # Classifica outros tipos de requerimentos
+        if "voto de congratula" in segment_lower or "formulado voto de congratula" in segment_lower:
+            return "Voto de congratulações"
+        if "manifestação de pesar" in segment_lower:
+            return "Manifestação de pesar"
+        if "manifestação de repúdio" in segment_lower:
+            return "Manifestação de repúdio"
+        if "moção de aplauso" in segment_lower:
+            return "Moção de aplauso"
+        return ""
+
+    requerimentos = []
+    rqn_pattern = re.compile(r"^(?:\s*)(Nº)\s+(\d{2}\.?\d{3}/\d{4})\s*,\s*(do|da)", re.MULTILINE)
+    rqc_pattern = re.compile(r"^(?:\s*)(nº)\s+(\d{2}\.?\d{3}/\d{4})\s*,\s*(do|da)", re.MULTILINE)
+    nao_recebidas_header_pattern = re.compile(r"PROPOSIÇÕES\s*NÃO\s*RECEBIDAS", re.IGNORECASE)
+    
+    for match in rqn_pattern.finditer(text):
+        start_idx = match.start()
+        next_match = re.search(r"^(?:\s*)(Nº|nº)\s+(\d{2}\.?\d{3}/\d{4})", text[start_idx + 1:], flags=re.MULTILINE)
+        end_idx = (next_match.start() + start_idx + 1) if next_match else len(text)
+        block = text[start_idx:end_idx].strip()
+        
+        nums_in_block = re.findall(r'\d{2}\.?\d{3}/\d{4}', block)
+        if not nums_in_block: continue
+        num_part, ano = nums_in_block[0].replace(".", "").split("/")
+        classif = classify_req(block)
+        requerimentos.append(["RQN", num_part, ano, "", "", classif])
+
+    for match in rqc_pattern.finditer(text):
+        start_idx = match.start()
+        next_match = re.search(r"^(?:\s*)(Nº|nº)\s+(\d{2}\.?\d{3}/\d{4})", text[start_idx + 1:], flags=re.MULTILINE)
+        end_idx = (next_match.start() + start_idx + 1) if next_match else len(text)
+        block = text[start_idx:end_idx].strip()
+        
+        nums_in_block = re.findall(r'\d{2}\.?\d{3}/\d{4}', block)
+        if not nums_in_block: continue
+        num_part, ano = nums_in_block[0].replace(".", "").split("/")
+        classif = classify_req(block)
+        requerimentos.append(["RQC", num_part, ano, "", "", classif])
+    
+    header_match = nao_recebidas_header_pattern.search(text
