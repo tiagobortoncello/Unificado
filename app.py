@@ -207,4 +207,72 @@ def process_administrative_pdf(pdf_bytes):
     regex = re.compile(
         r'(DELIBERAÇÃO DA MESA|PORTARIA DGE|ORDEM DE SERVIÇO PRES/PSEC)\s+Nº\s+([\d\.]+)\/(\d{4})'
     )
-    regex_dcs = re.compile(r'DECIS[Ã
+    regex_dcs = re.compile(r'DECISÃO DA 1ª-SECRETARIA')
+
+    for page in doc:
+        text = page.get_text("text")
+        text = re.sub(r'\s+', ' ', text)
+
+        for match in regex.finditer(text):
+            tipo_texto = match.group(1)
+            numero = match.group(2).replace('.', '')
+            ano = match.group(3)
+
+            if tipo_texto.startswith("DELIBERAÇÃO DA MESA"):
+                sigla = "DLB"
+            elif tipo_texto.startswith("PORTARIA"):
+                sigla = "PRT"
+            elif tipo_texto.startswith("ORDEM DE SERVIÇO"):
+                sigla = "OSV"
+            else:
+                continue
+            resultados.append([sigla, numero, ano])
+
+        if regex_dcs.search(text):
+            resultados.append(["DCS", "", ""])
+    doc.close()
+
+    output_csv = io.StringIO()
+    writer = csv.writer(output_csv, delimiter="\t")
+    writer.writerows(resultados)
+    return output_csv.getvalue().encode('utf-8')
+
+# --- Função Principal da Aplicação ---
+
+def run_app():
+    # --- Custom CSS para estilizar os títulos ---
+    st.markdown("""
+        <style>
+        .title-container {
+            text-align: center;
+            background-color: #f0f0f0;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+        }
+        .main-title {
+            color: #d11a2a;
+            font-size: 3em;
+            font-weight: bold;
+            margin-bottom: 0;
+        }
+        .subtitle-gil {
+            color: gray;
+            font-size: 1.5em;
+            margin-top: 5px;
+        }
+        </style>
+    """, unsafe_allow_html=True)
+
+    # --- Título e informações ---
+    st.markdown("""
+        <div class="title-container">
+            <h1 class="main-title">Extrator de Documentos Oficiais</h1>
+            <h4 class="subtitle-gil">GERÊNCIA DE INFORMAÇÃO LEGISLATIVA - GIL/GDI</h4>
+        </div>
+    """, unsafe_allow_html=True)
+    
+    st.divider()
+
+    # --- Seletor de tipo de Diário ---
+    diario_escolhido = st.radio(
