@@ -33,7 +33,7 @@ def process_legislative_pdf(text):
             continue
         sigla = tipo_map_norma[tipo_extenso]
         normas.append([sigla, numero_raw, ano])
-    df_normas = pd.DataFrame(normas)
+    df_normas = pd.DataFrame(normas, columns=['Sigla', 'Número', 'Ano'])
 
     # ==========================
     # ABA 2: Proposições
@@ -48,8 +48,6 @@ def process_legislative_pdf(text):
         re.MULTILINE
     )
     
-    # A string do regex estava dividida em duas linhas, o que pode causar o erro.
-    # Corrigido para uma única linha.
     pattern_utilidade = re.compile(r"Declara de utilidade pública", re.IGNORECASE | re.DOTALL)
 
     proposicoes = []
@@ -70,10 +68,8 @@ def process_legislative_pdf(text):
         if pattern_utilidade.search(subseq_text):
             categoria = "Utilidade Pública"
         
-        # Inserindo duas colunas vazias após a coluna 'ano'
         proposicoes.append([sigla, numero, ano, '', '', categoria])
     
-    # Adicionando os nomes das novas colunas ao DataFrame
     df_proposicoes = pd.DataFrame(proposicoes, columns=['Sigla', 'Número', 'Ano', 'Categoria 1', 'Categoria 2', 'Categoria'])
     
     # ==========================
@@ -82,11 +78,9 @@ def process_legislative_pdf(text):
     def classify_req(segment):
         segment_lower = segment.lower()
         
-        # Regras de exclusão para requerimentos de audiência
         if "realizada audiência pública" in segment_lower or "audiência de convidados" in segment_lower:
             return ""
         
-        # Classifica outros tipos de requerimentos
         if "voto de congratula" in segment_lower or "formulado voto de congratula" in segment_lower:
             return "Voto de congratulações"
         if "manifestação de pesar" in segment_lower:
@@ -146,7 +140,7 @@ def process_legislative_pdf(text):
         if key not in seen:
             seen.add(key)
             unique_reqs.append(r)
-    df_requerimentos = pd.DataFrame(unique_reqs)
+    df_requerimentos = pd.DataFrame(unique_reqs, columns=['Sigla', 'Número', 'Ano', 'Categoria 1', 'Categoria 2', 'Classificação'])
 
     # ==========================
     # ABA 4: Pareceres
@@ -186,4 +180,6 @@ def process_legislative_pdf(text):
     for (sigla, numero, ano), types in found_projects.items():
         type_str = "SUB/EMENDA" if len(types) > 1 else list(types)[0]
         pareceres.append([sigla, numero, ano, type_str])
-    df_pareceres
+    df_pareceres = pd.DataFrame(pareceres, columns=['Sigla', 'Número', 'Ano', 'Tipo'])
+
+    return df_normas, df_proposicoes, df_requerimentos, df_pareceres
